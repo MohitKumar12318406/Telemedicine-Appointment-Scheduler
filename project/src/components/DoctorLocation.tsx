@@ -24,13 +24,29 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
   const [mapLoaded, setMapLoaded] = useState(false);
 
   useEffect(() => {
+    // Check if API key is available
+    if (!GOOGLE_MAPS_CONFIG.apiKey) {
+      setError('Google Maps API key is not configured. Please check your environment variables.');
+      setLoading(false);
+      return;
+    }
+
     // Load Google Maps script
     const loadGoogleMaps = () => {
+      if (window.google) {
+        setMapLoaded(true);
+        return;
+      }
+
       const script = document.createElement('script');
       script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_CONFIG.apiKey}&libraries=${GOOGLE_MAPS_CONFIG.libraries.join(',')}&v=${GOOGLE_MAPS_CONFIG.version}`;
       script.async = true;
       script.defer = true;
       script.onload = () => setMapLoaded(true);
+      script.onerror = () => {
+        setError('Failed to load Google Maps. Please check your internet connection and API key.');
+        setLoading(false);
+      };
       document.head.appendChild(script);
     };
 
@@ -60,10 +76,21 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
           setDoctorData({
             placeId: '',
             name: doctorName,
-            address: 'Address not available',
+            address: 'Location available on map',
             latitude,
-            longitude
+            longitude,
+            rating: 0,
+            userRatingsTotal: 0,
+            phoneNumber: 'Contact through appointment system',
+            website: '',
+            openingHours: [
+              'Monday - Friday: 9:00 AM - 5:00 PM',
+              'Saturday: 9:00 AM - 1:00 PM',
+              'Sunday: Closed'
+            ]
           });
+        } else {
+          setError('Location information not available');
         }
       } catch (err) {
         console.error('Error fetching doctor data:', err);
@@ -73,22 +100,35 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
       }
     };
 
-    if (mapLoaded && (placeId || (latitude && longitude))) {
+    if (placeId || (latitude && longitude)) {
       fetchDoctorData();
     }
-  }, [placeId, latitude, longitude, doctorName, mapLoaded]);
+  }, [placeId, latitude, longitude, doctorName]);
 
   useEffect(() => {
     if (mapLoaded && doctorData) {
-      initMap();
+      try {
+        initMap();
+      } catch (err) {
+        console.error('Error initializing map:', err);
+        setError('Failed to initialize map. Please try again later.');
+      }
     }
   }, [mapLoaded, doctorData]);
 
   const initMap = () => {
-    if (!doctorData) return;
+    if (!doctorData || !window.google) {
+      setError('Map initialization failed. Please refresh the page.');
+      return;
+    }
     
     const mapElement = document.getElementById('doctor-location-map');
-    if (mapElement && window.google) {
+    if (!mapElement) {
+      setError('Map container not found');
+      return;
+    }
+
+    try {
       const map = new window.google.maps.Map(mapElement, {
         center: { lat: doctorData.latitude, lng: doctorData.longitude },
         zoom: 15,
@@ -102,12 +142,30 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
       });
 
       // Add marker for doctor's location
-      new window.google.maps.Marker({
+      const marker = new window.google.maps.Marker({
         position: { lat: doctorData.latitude, lng: doctorData.longitude },
         map,
         title: doctorData.name,
         animation: window.google.maps.Animation.DROP
       });
+
+      // Add info window
+      const infoWindow = new window.google.maps.InfoWindow({
+        content: `
+          <div class="p-2">
+            <h3 class="font-medium">${doctorData.name}</h3>
+            <p class="text-sm text-gray-600">${doctorData.address}</p>
+            ${doctorData.phoneNumber ? `<p class="text-sm mt-1">${doctorData.phoneNumber}</p>` : ''}
+          </div>
+        `
+      });
+
+      marker.addListener('click', () => {
+        infoWindow.open(map, marker);
+      });
+    } catch (err) {
+      console.error('Error creating map:', err);
+      setError('Failed to create map. Please check your API key and try again.');
     }
   };
 
@@ -122,8 +180,20 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
 
   if (error) {
     return (
-      <div className="w-full p-4 text-center text-red-500">
-        <p>{error}</p>
+      <div className="w-full p-4 text-center">
+        <div className="bg-red-50 p-4 rounded-lg">
+          <p className="text-red-500">{error}</p>
+          <p className="text-sm text-gray-600 mt-2">
+            {doctorData && (
+              <>
+                <strong>Doctor Information:</strong><br />
+                Name: {doctorData.name}<br />
+                Address: {doctorData.address}<br />
+                {doctorData.phoneNumber && `Phone: ${doctorData.phoneNumber}`}
+              </>
+            )}
+          </p>
+        </div>
       </div>
     );
   }
@@ -146,6 +216,7 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
         
         <div className="bg-white p-4 rounded-lg shadow-md">
           <h4 className="font-medium text-lg mb-2">{doctorData.name}</h4>
+          <p className="text-sm text-gray-600 mb-2">{specialization}</p>
           
           <div className="space-y-2 text-sm">
             <div className="flex items-start">
@@ -174,43 +245,29 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
               </div>
             )}
             
-            {doctorData.rating && (
-              <div className="flex items-center">
-                <Star className="h-5 w-5 text-yellow-400 mr-2" />
-                <span>{doctorData.rating} ({doctorData.userRatingsTotal} reviews)</span>
-              </div>
-            )}
-            
-            {doctorData.openingHours && doctorData.openingHours.length > 0 && (
+            {doctorData.openingHours && (
               <div className="flex items-start">
                 <Clock className="h-5 w-5 text-gray-500 mr-2 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="font-medium">Opening Hours:</p>
                   <ul className="mt-1">
-                    {doctorData.openingHours.map((hour, index) => (
-                      <li key={index}>{hour}</li>
+                    {doctorData.openingHours.map((hours, index) => (
+                      <li key={index}>{hours}</li>
                     ))}
                   </ul>
                 </div>
               </div>
             )}
-          </div>
-          
-          {doctorData.photos && doctorData.photos.length > 0 && (
-            <div className="mt-4">
-              <p className="font-medium mb-2">Photos:</p>
-              <div className="grid grid-cols-2 gap-2">
-                {doctorData.photos.slice(0, 4).map((photo, index) => (
-                  <img 
-                    key={index} 
-                    src={photo} 
-                    alt={`${doctorData.name} photo ${index + 1}`}
-                    className="w-full h-24 object-cover rounded"
-                  />
-                ))}
+            
+            {doctorData.rating && (
+              <div className="flex items-center">
+                <Star className="h-5 w-5 text-yellow-400 mr-2" />
+                <span>
+                  {doctorData.rating} ({doctorData.userRatingsTotal} reviews)
+                </span>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

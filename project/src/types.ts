@@ -16,40 +16,27 @@ export interface Symptom {
 }
 
 export interface Appointment {
-  id: string;
-  date: Date;
+  id?: string;
+  date?: Date;
   time?: string;
-  doctorId: number;
-  doctorName: string;
-  specializationId: number;
-  specialization: string;
-  confirmed: boolean;
+  doctorId?: string;
+  doctorName?: string;
+  specializationId?: number;
+  specialization?: string;
   patientName?: string;
-  patientAge?: number;
-  patientGender?: 'male' | 'female' | 'other';
-  symptoms: Symptom[];
-  preliminaryDiagnosis?: string;
-  notes?: string;
+  symptoms?: any[];
   contactNumber?: string;
   email?: string;
+  confirmed?: boolean;
 }
 
 export interface ChatState {
+  currentStep: 'initial' | 'patient-info' | 'symptoms-selection' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation';
   messages: Message[];
-  currentStep: 
-    | 'initial' 
-    | 'patient-info'
-    | 'symptoms-selection'
-    | 'specialization'
-    | 'doctor'
-    | 'date'
-    | 'time'
-    | 'contact-info'
-    | 'confirmation';
   appointment: Partial<Appointment>;
-  availableSymptoms?: Symptom[];
-  availableDoctors?: Doctor[];
-  suggestedSpecializations?: Specialization[];
+  availableSymptoms?: any[];
+  availableDoctors?: any[];
+  suggestedSpecializations?: any[];
 }
 
 export interface TimeSlot {

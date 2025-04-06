@@ -6,58 +6,27 @@ import { DoctorLocation } from './components/DoctorLocation';
 import { SPECIALIZATIONS, SYMPTOMS, DISEASES, DOCTORS } from './data/medical-data';
 import { Specialization, Symptom, Disease, Doctor } from './services/api';
 import { format } from 'date-fns';
-import { searchDoctorsByLocation, getCurrentLocation, DoctorLocationData } from './services/googleApi';
-import { doctors } from './data/doctors';
+import { getCurrentLocation, searchDoctorsByLocation } from './services/googleApi';
+import { DoctorLocationData } from './services/googleApi';
 import { sendChatMessage, searchDoctors, getDoctorDetails, ChatResponse } from './services/backendApi';
+import { Message, ChatState } from './types';
+import { fetchPrompts } from './services/promptApi';
 
-type Message = {
-  id: string;
-  content: string;
-  role: 'user' | 'bot';
-  timestamp: Date;
-  options?: string[];
-};
-
-type ChatState = {
-  currentStep: 'initial' | 'name' | 'patient-info' | 'symptoms-selection' | 'specialization' | 'consultation-type' | 'doctor' | 'date' | 'time' | 'contact-info' | 'email' | 'confirmation';
-  messages: Message[];
-  appointment: {
-    id?: string;
-    date?: Date;
-    time?: string;
-    doctorId?: number;
-    doctorName?: string;
-    specializationId?: number;
-    specialization?: string;
-    patientName?: string;
-    patientAge?: number;
-    symptoms?: string[];
-    contactNumber?: string;
-    email?: string;
-    consultationType?: 'virtual' | 'in-person' | 'both';
-    preliminaryDiagnosis?: string[];
-  };
-  availableSymptoms?: Symptom[];
-  availableDoctors?: Doctor[];
-  suggestedSpecializations?: Specialization[];
-  selectedSpecialization: string;
-  selectedDoctor: DoctorLocationData | null;
-  userLocation: { latitude: number; longitude: number } | null;
-  loading: boolean;
-  input: string;
-};
-
-function App() {
+export default function App() {
   const [state, setState] = useState<ChatState>({
     currentStep: 'initial',
     messages: [],
     appointment: {},
-    selectedSpecialization: '',
-    selectedDoctor: null,
-    userLocation: null,
-    loading: false,
-    input: ''
+    availableSymptoms: SYMPTOMS,
+    availableDoctors: DOCTORS,
+    suggestedSpecializations: SPECIALIZATIONS
   });
+
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [input, setInput] = useState('');
+  const [selectedDoctor, setSelectedDoctor] = useState<DoctorLocationData | null>(null);
+  const [selectedSpecialization, setSelectedSpecialization] = useState('');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -70,10 +39,7 @@ function App() {
     const getUserLocation = async () => {
       try {
         const location = await getCurrentLocation();
-        setState(prev => ({
-          ...prev,
-          userLocation: location
-        }));
+        setUserLocation(location);
       } catch (error) {
         console.error('Error getting user location:', error);
       }
@@ -82,27 +48,56 @@ function App() {
     getUserLocation();
   }, []);
 
+  // Fetch prompts when step changes
+  useEffect(() => {
+    const loadPrompts = async () => {
+      setLoading(true);
+      try {
+        const prompts = await fetchPrompts(state.currentStep);
+        
+        // Add the first prompt as a bot message
+        if (prompts.length > 0) {
+          const prompt = prompts[0];
+          addMessage(prompt.message, 'bot', prompt.options);
+        }
+      } catch (error) {
+        console.error('Error loading prompts:', error);
+        // Fallback to default message
+        addMessage('How can I help you today?', 'bot');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Only load prompts for initial step or when moving to a new step
+    if (state.currentStep === 'initial' || state.messages.length === 0) {
+      loadPrompts();
+    }
+  }, [state.currentStep]);
+
   const addMessage = (content: string, role: 'user' | 'bot', options?: string[]) => {
+    const message: Message = {
+      id: Date.now().toString(),
+      content,
+      role,
+      timestamp: new Date(),
+      options
+    };
+    
     setState(prev => ({
       ...prev,
-      messages: [...prev.messages, { content, role, options }]
+      messages: [...prev.messages, message]
     }));
   };
 
-  const findPossibleDiagnosis = (symptomIds: number[]): Disease[] => {
-    return DISEASES.filter((disease: Disease) => 
-      disease.commonSymptoms.some((id: number) => symptomIds.includes(id))
-    );
-  };
-
   const handleSend = async () => {
-    if (!state.input.trim()) return;
+    if (!input.trim()) return;
 
-    const userMessage = state.input.trim();
-    setState(prev => ({ ...prev, input: '' }));
+    const userMessage = input.trim();
+    setInput('');
     addMessage(userMessage, 'user');
 
-    setState(prev => ({ ...prev, loading: true }));
+    setLoading(true);
 
     try {
       // Send message to backend
@@ -113,438 +108,304 @@ function App() {
 
       // Update step if provided
       if (response.nextStep) {
-        setState(prev => ({ ...prev, currentStep: response.nextStep }));
+        // Use type assertion to ensure compatibility with ChatState
+        const nextStep = response.nextStep as 'initial' | 'patient-info' | 'symptoms-selection' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation';
+        setState(prev => ({ 
+          ...prev, 
+          currentStep: nextStep
+        }));
       }
 
       // If doctors are returned, update the selected doctor
       if (response.doctors && response.doctors.length > 0) {
-        setState(prev => ({
-          ...prev,
-          selectedDoctor: response.doctors[0]
-        }));
+        setSelectedDoctor(response.doctors[0]);
       }
     } catch (error) {
       console.error('Error processing message:', error);
       addMessage('Sorry, I encountered an error. Please try again.', 'bot');
     } finally {
-      setState(prev => ({ ...prev, loading: false }));
+      setLoading(false);
+    }
+  };
+
+  const handleSpecializationSelect = async (specialization: string) => {
+    setSelectedSpecialization(specialization);
+    setLoading(true);
+
+    try {
+      if (userLocation) {
+        // Search for doctors using backend API
+        const result = await searchDoctors(
+          specialization,
+          userLocation.latitude,
+          userLocation.longitude
+        );
+
+        if (result.doctors && result.doctors.length > 0) {
+          setSelectedDoctor(result.doctors[0]);
+          setState(prev => ({ 
+            ...prev, 
+            currentStep: 'doctor',
+            appointment: {
+              ...prev.appointment,
+              specializationId: SPECIALIZATIONS.findIndex(s => s.name === specialization) + 1,
+              specialization: specialization
+            }
+          }));
+        } else {
+          // Fallback to static data if no results found
+          const staticDoctor = DOCTORS.find(d => d.specialization === SPECIALIZATIONS.findIndex(s => s.name === specialization) + 1);
+          if (staticDoctor) {
+            setSelectedDoctor({
+              placeId: '',
+              name: staticDoctor.name,
+              address: 'Address not available',
+              latitude: 40.7128,
+              longitude: -74.0060
+            });
+            setState(prev => ({ 
+              ...prev, 
+              currentStep: 'doctor',
+              appointment: {
+                ...prev.appointment,
+                specializationId: SPECIALIZATIONS.findIndex(s => s.name === specialization) + 1,
+                specialization: specialization
+              }
+            }));
+          }
+        }
+      } else {
+        // If no user location, use static data
+        const staticDoctor = DOCTORS.find(d => d.specialization === SPECIALIZATIONS.findIndex(s => s.name === specialization) + 1);
+        if (staticDoctor) {
+          setSelectedDoctor({
+            placeId: '',
+            name: staticDoctor.name,
+            address: 'Address not available',
+            latitude: 40.7128,
+            longitude: -74.0060
+          });
+          setState(prev => ({ 
+            ...prev, 
+            currentStep: 'doctor',
+            appointment: {
+              ...prev.appointment,
+              specializationId: SPECIALIZATIONS.findIndex(s => s.name === specialization) + 1,
+              specialization: specialization
+            }
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error searching for doctors:', error);
+      // Fallback to static data
+      const staticDoctor = DOCTORS.find(d => d.specialization === SPECIALIZATIONS.findIndex(s => s.name === specialization) + 1);
+      if (staticDoctor) {
+        setSelectedDoctor({
+          placeId: '',
+          name: staticDoctor.name,
+          address: 'Address not available',
+          latitude: 40.7128,
+          longitude: -74.0060
+        });
+        setState(prev => ({ 
+          ...prev, 
+          currentStep: 'doctor',
+          appointment: {
+            ...prev.appointment,
+            specializationId: SPECIALIZATIONS.findIndex(s => s.name === specialization) + 1,
+            specialization: specialization
+          }
+        }));
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleUserMessage = (message: string) => {
     addMessage(message, 'user');
 
+    // Check if user wants to start over or start from first
+    if (message.toLowerCase() === 'start over' || message.toLowerCase() === 'start from first') {
+      setState({
+        currentStep: 'initial',
+        messages: [],
+        appointment: {},
+        availableSymptoms: SYMPTOMS,
+        availableDoctors: DOCTORS,
+        suggestedSpecializations: SPECIALIZATIONS
+      });
+      return;
+    }
+
     switch (state.currentStep) {
       case 'initial':
         setState(prev => ({
           ...prev,
-          currentStep: 'name'
-        }));
-        addMessage('Please enter your name:', 'bot');
-        break;
-
-      case 'name':
-        setState(prev => ({
-          ...prev,
-          appointment: { ...prev.appointment, patientName: message },
           currentStep: 'patient-info'
         }));
-        addMessage('Please enter your age:', 'bot');
         break;
 
       case 'patient-info':
-        const age = parseInt(message);
-        if (isNaN(age) || age < 0 || age > 120) {
-          addMessage('Please enter a valid age between 0 and 120:', 'bot');
+        // Validate name (letters and spaces only, minimum 2 characters)
+        if (!/^[a-zA-Z\s]{2,50}$/.test(message)) {
+          addMessage('Please enter a valid name (letters and spaces only, 2-50 characters):', 'bot');
           return;
         }
+        
         setState(prev => ({
           ...prev,
-          appointment: { ...prev.appointment, patientAge: age },
-          currentStep: 'symptoms-selection',
-          availableSymptoms: SYMPTOMS
+          appointment: { ...prev.appointment, patientName: message },
+          currentStep: 'symptoms-selection'
         }));
-        addMessage(
-          'Please select your symptoms from the list:',
-          'bot',
-          SYMPTOMS.map((s: Symptom) => `${s.name} - ${s.description}`)
-        );
         break;
 
       case 'symptoms-selection':
-        const selectedSymptoms = state.availableSymptoms?.filter((symptom: Symptom) =>
+        const selectedSymptoms = SYMPTOMS.filter(symptom =>
           message.toLowerCase().includes(symptom.name.toLowerCase())
         );
 
-        if (!selectedSymptoms || selectedSymptoms.length === 0) {
-          addMessage('Please select valid symptoms from the list.', 'bot',
-            state.availableSymptoms?.map((s: Symptom) => s.name)
-          );
+        if (selectedSymptoms.length === 0) {
+          addMessage('Please select valid symptoms from the list.', 'bot', SYMPTOMS.map(s => s.name));
           return;
         }
 
-        const possibleConditions = findPossibleDiagnosis(selectedSymptoms.map((s: Symptom) => s.id));
-        const suggestedSpecs = possibleConditions.map((d: Disease) => d.recommendedSpecialization);
+        const possibleConditions = DISEASES.filter(disease =>
+          disease.commonSymptoms.some(id => selectedSymptoms.some(s => s.id === id))
+        );
 
-        const filteredSpecializations = SPECIALIZATIONS.filter((s: Specialization) => 
-          suggestedSpecs.includes(s.id)
+        const suggestedSpecs = SPECIALIZATIONS.filter(spec =>
+          possibleConditions.some(disease => disease.recommendedSpecialization === spec.id)
         );
 
         setState(prev => ({
           ...prev,
           appointment: { 
             ...prev.appointment, 
-            symptoms: selectedSymptoms.map((s: Symptom) => s.name),
-            preliminaryDiagnosis: possibleConditions.map((d: Disease) => d.name)
+            symptoms: selectedSymptoms
           },
           currentStep: 'specialization',
-          suggestedSpecializations: filteredSpecializations
+          suggestedSpecializations: suggestedSpecs
         }));
-
-        if (filteredSpecializations.length === 0) {
-          addMessage('No specializations found for your symptoms. Please try selecting different symptoms.', 'bot');
-          return;
-        }
-
-        // Create a formatted list of specializations
-        const specializationList = filteredSpecializations.map((s: Specialization, index: number) => 
-          `${index + 1}. ${s.name} - ${s.description}`
-        ).join('\n');
-
-        addMessage(
-          `Based on your symptoms, here are the recommended specializations. Please select one by typing the number:\n\n${specializationList}`,
-          'bot'
-        );
         break;
 
       case 'specialization':
-        const selectedIndex = parseInt(message) - 1;
-        
-        if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= (state.suggestedSpecializations?.length || 0)) {
-          // Create a formatted list of specializations for the error message
-          const specializationList = state.suggestedSpecializations?.map((s: Specialization, index: number) => 
-            `${index + 1}. ${s.name} - ${s.description}`
-          ).join('\n');
-          
-          addMessage(
-            `Please enter a valid number from the list:\n\n${specializationList}`,
-            'bot'
-          );
-          return;
-        }
-        
-        const selectedSpec = state.suggestedSpecializations?.[selectedIndex];
+        const selectedSpec = SPECIALIZATIONS.find(s => s.name === message);
         
         if (!selectedSpec) {
-          // Create a formatted list of specializations for the error message
-          const specializationList = state.suggestedSpecializations?.map((s: Specialization, index: number) => 
-            `${index + 1}. ${s.name} - ${s.description}`
-          ).join('\n');
-          
-          addMessage(
-            `Please select a valid specialization by entering the number from the list:\n\n${specializationList}`,
-            'bot'
-          );
-          return;
-        }
-
-        const availableDoctors = DOCTORS.filter((d: Doctor) => d.specialization === selectedSpec.id);
-        
-        if (availableDoctors.length === 0) {
-          // Create a formatted list of specializations for the error message
-          const specializationList = state.suggestedSpecializations?.map((s: Specialization, index: number) => 
-            `${index + 1}. ${s.name} - ${s.description}`
-          ).join('\n');
-          
-          addMessage(
-            `No doctors available for this specialization. Please select another one:\n\n${specializationList}`,
-            'bot'
+          addMessage('Please select a valid specialization from the list.', 'bot',
+            state.suggestedSpecializations?.map(s => s.name)
           );
           return;
         }
         
-        setState(prev => ({
-          ...prev,
-          appointment: { ...prev.appointment, specializationId: selectedSpec.id, specialization: selectedSpec.name },
-          currentStep: 'consultation-type',
-          availableDoctors
-        }));
-
-        addMessage(
-          'Please select your preferred consultation type:',
-          'bot',
-          ['Virtual Consultation', 'In-Person Consultation', 'Both']
-        );
-        break;
-
-      case 'consultation-type':
-        let consultationType: 'virtual' | 'in-person' | 'both' = 'both';
-        let filteredDoctors = state.availableDoctors || [];
-        
-        if (message.toLowerCase().includes('virtual')) {
-          consultationType = 'virtual';
-          filteredDoctors = filteredDoctors.filter((d: Doctor) => d.virtualConsultationAvailable);
-        } else if (message.toLowerCase().includes('in-person')) {
-          consultationType = 'in-person';
-          filteredDoctors = filteredDoctors.filter((d: Doctor) => d.inPersonConsultationAvailable);
-        }
-        
-        if (filteredDoctors.length === 0) {
-          addMessage(
-            `No doctors available for ${consultationType} consultation in ${state.appointment.specialization}. Please select a different specialization.`,
-            'bot',
-            state.suggestedSpecializations?.map((s: Specialization) => `${s.name} - ${s.description}`)
-          );
-          setState(prev => ({
-            ...prev,
-            currentStep: 'specialization'
-          }));
-          return;
-        }
-        
-        // Sort doctors by rating (highest first)
-        filteredDoctors.sort((a: Doctor, b: Doctor) => b.rating - a.rating);
-        
-        const doctorOptions = filteredDoctors.map((d: Doctor) => 
-          `${d.name} - ${d.experience} experience, Rating: ${d.rating}/5 (${d.reviewCount} reviews), Fee: $${d.consultationFee}`
-        );
-        
-        addMessage(
-          'Please choose your preferred doctor:',
-          'bot',
-          doctorOptions
-        );
-        
-        setState(prev => ({
-          ...prev,
-          appointment: { ...prev.appointment, consultationType },
-          currentStep: 'doctor',
-          availableDoctors: filteredDoctors
-        }));
+        handleSpecializationSelect(selectedSpec.name);
         break;
 
       case 'doctor':
-        const selectedDoctor = state.availableDoctors?.find((d: Doctor) =>
-          message.toLowerCase().includes(d.name.toLowerCase())
-        );
-
-        if (!selectedDoctor) {
-          addMessage('Please select a valid doctor from the list.', 'bot',
-            state.availableDoctors?.map((d: Doctor) => 
-              `${d.name} - ${d.experience} experience, Rating: ${d.rating}/5 (${d.reviewCount} reviews), Fee: $${d.consultationFee}`)
-          );
-          return;
-        }
-
         setState(prev => ({
           ...prev,
           appointment: { 
             ...prev.appointment, 
-            doctorId: selectedDoctor.id,
-            doctorName: selectedDoctor.name
+            doctorId: selectedDoctor?.placeId || '',
+            doctorName: selectedDoctor?.name || ''
           },
-          currentStep: 'date',
+          currentStep: 'date'
         }));
-        addMessage('Please enter your preferred appointment date (e.g., "2024-04-05"):', 'bot');
         break;
 
       case 'date':
         try {
+          // Validate date format (YYYY-MM-DD)
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(message)) {
+            addMessage('Please enter a valid date in the format YYYY-MM-DD:', 'bot');
+            return;
+          }
+          
           const date = new Date(message);
           if (isNaN(date.getTime())) {
             throw new Error('Invalid date');
           }
-          const selectedDoctor = state.availableDoctors?.find(d => d.id === state.appointment.doctorId);
-          if (!selectedDoctor) {
-            addMessage('Error: Doctor information not found. Please start over.', 'bot');
-            setState({
-              currentStep: 'initial',
-              messages: [],
-              appointment: {}
-            });
+          
+          // Check if date is in the future
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          if (date < today) {
+            addMessage('Please select a future date for your appointment:', 'bot');
             return;
           }
+          
+          // Check if date is within 3 months
+          const threeMonthsFromNow = new Date();
+          threeMonthsFromNow.setMonth(threeMonthsFromNow.getMonth() + 3);
+          
+          if (date > threeMonthsFromNow) {
+            addMessage('Please select a date within the next 3 months:', 'bot');
+            return;
+          }
+          
           setState(prev => ({
             ...prev,
             appointment: { ...prev.appointment, date },
-            currentStep: 'time'
+            currentStep: 'contact-info'
           }));
-          addMessage('Please select your preferred time slot:', 'bot',
-            selectedDoctor.availability.timeSlots
-          );
         } catch (error) {
           addMessage('Please enter a valid date in the format YYYY-MM-DD:', 'bot');
         }
         break;
 
-      case 'time':
-        const currentDoctor = state.availableDoctors?.find(d => d.id === state.appointment.doctorId);
-        if (!currentDoctor) {
-          addMessage('Error: Doctor information not found. Please start over.', 'bot');
-          setState({
-            currentStep: 'initial',
-            messages: [],
-            appointment: {}
-          });
-          return;
-        }
-        
-        const selectedTime = currentDoctor.availability.timeSlots.find(t => 
-          message.toLowerCase().includes(t.toLowerCase())
-        );
-        
-        if (!selectedTime) {
-          addMessage('Please select a valid time slot from the list:', 'bot',
-            currentDoctor.availability.timeSlots
-          );
-          return;
-        }
-        
-        setState(prev => ({
-          ...prev,
-          appointment: { ...prev.appointment, time: selectedTime },
-          currentStep: 'contact-info'
-        }));
-        addMessage('Please enter your contact number:', 'bot');
-        break;
-
       case 'contact-info':
-        const phoneRegex = /^\+?[\d\s-]{10,}$/;
-        if (!phoneRegex.test(message)) {
-          addMessage('Please enter a valid phone number:', 'bot');
+        // Validate phone number (10 digits, can include spaces, dashes, and parentheses)
+        if (!/^[\d\s\-\(\)]{10,}$/.test(message)) {
+          addMessage('Please enter a valid phone number (at least 10 digits):', 'bot');
           return;
         }
+        
         setState(prev => ({
           ...prev,
           appointment: { ...prev.appointment, contactNumber: message },
-          currentStep: 'email'
-        }));
-        addMessage('Please enter your email address:', 'bot');
-        break;
-
-      case 'email':
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(message)) {
-          addMessage('Please enter a valid email address:', 'bot');
-          return;
-        }
-        setState(prev => ({
-          ...prev,
-          appointment: { ...prev.appointment, email: message },
           currentStep: 'confirmation'
         }));
-
-        const confirmationMessage = `
-Appointment Details:
-Patient Name: ${state.appointment.patientName}
-Age: ${state.appointment.patientAge}
-Symptoms: ${state.appointment.symptoms?.join(', ')}
-Preliminary Assessment: ${state.appointment.preliminaryDiagnosis?.join(', ')}
-Specialization: ${state.appointment.specialization}
-Doctor: ${state.appointment.doctorName}
-Date: ${format(state.appointment.date!, 'MMMM d, yyyy')}
-Time: ${state.appointment.time}
-Contact Number: ${state.appointment.contactNumber}
-Email: ${message}
-Consultation Type: ${state.appointment.consultationType}
-
-Please confirm your appointment by typing "confirm" or start over by typing "start over".
-        `;
-        addMessage(confirmationMessage, 'bot');
         break;
 
       case 'confirmation':
-        if (message.toLowerCase() === 'confirm') {
-          addMessage(`
-Thank you for confirming your appointment! We've sent a confirmation email to ${state.appointment.email} and an SMS to your registered contact details.
-
-Your appointment details:
-Specialization: ${state.appointment.specialization}
-Doctor: ${state.appointment.doctorName}
-Date: ${format(state.appointment.date!, 'MMMM d, yyyy')}
-Time: ${state.appointment.time}
-Consultation Type: ${state.appointment.consultationType}
-Contact Number: ${state.appointment.contactNumber}
-Email: ${state.appointment.email}
-
-You can start a new appointment by typing "start over".
-          `, 'bot');
-        } else if (message.toLowerCase() === 'start over') {
-          setState({
-            currentStep: 'initial',
-            messages: [],
-            appointment: {}
-          });
-          addMessage('Please enter your name:', 'bot');
-        } else {
-          addMessage('Please type "confirm" to confirm your appointment or "start over" to begin a new appointment.', 'bot');
+        // Validate email format
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(message)) {
+          addMessage('Please enter a valid email address:', 'bot');
+          return;
         }
-        break;
-    }
-  };
-
-  const handleSpecializationSelect = async (specialization: string) => {
-    setState(prev => ({
-      ...prev,
-      selectedSpecialization: specialization,
-      loading: true
-    }));
-
-    try {
-      if (state.userLocation) {
-        // Search for doctors using backend API
-        const result = await searchDoctors(
-          specialization,
-          state.userLocation.latitude,
-          state.userLocation.longitude
-        );
-
-        if (result.doctors && result.doctors.length > 0) {
-          setState(prev => ({
-            ...prev,
-            selectedDoctor: result.doctors[0],
-            currentStep: 'doctor'
-          }));
-        } else {
-          // Fallback to static data if no results found
-          const staticDoctor = doctors.find(d => d.specialization === specialization);
-          if (staticDoctor) {
-            setState(prev => ({
-              ...prev,
-              selectedDoctor: {
-                placeId: '',
-                name: staticDoctor.name,
-                address: 'Address not available',
-                latitude: 40.7128,
-                longitude: -74.0060
-              },
-              currentStep: 'doctor'
-            }));
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error searching for doctors:', error);
-      // Fallback to static data
-      const staticDoctor = doctors.find(d => d.specialization === specialization);
-      if (staticDoctor) {
+        
         setState(prev => ({
           ...prev,
-          selectedDoctor: {
-            placeId: '',
-            name: staticDoctor.name,
-            address: 'Address not available',
-            latitude: 40.7128,
-            longitude: -74.0060
-          },
-          currentStep: 'doctor'
+          appointment: { ...prev.appointment, email: message, confirmed: true }
         }));
-      }
-    } finally {
-      setState(prev => ({
-        ...prev,
-        loading: false
-      }));
+
+        const appointment = state.appointment;
+        const tableData = [
+          ['Field', 'Value'],
+          ['Name', appointment.patientName || ''],
+          ['Specialization', appointment.specialization || ''],
+          ['Doctor', appointment.doctorName || ''],
+          ['Date', format(appointment.date || new Date(), 'MMMM d, yyyy')],
+          ['Contact Number', appointment.contactNumber || ''],
+          ['Email', message],
+          ['Status', 'Confirmed']
+        ];
+
+        const table = tableData.map(row => `| ${row[0].padEnd(15)} | ${row[1].padEnd(20)} |`).join('\n');
+        const separator = '|' + '-'.repeat(17) + '|' + '-'.repeat(22) + '|';
+
+        const confirmationMessage = `
+Your appointment has been confirmed! You will receive a confirmation email shortly.
+
+${table.split('\n')[0]}
+${separator}
+${table.split('\n').slice(1).join('\n')}
+        `;
+        addMessage(confirmationMessage, 'bot');
+        break;
     }
   };
 
@@ -553,32 +414,67 @@ You can start a new appointment by typing "start over".
       <div className="max-w-4xl mx-auto">
         <div className="chat-container rounded-xl shadow-lg overflow-hidden">
           {/* Header */}
-          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 flex items-center gap-3">
-            <Stethoscope className="text-white" size={28} />
-            <div>
-              <h1 className="text-2xl font-semibold text-white">Telemedicine Appointment Scheduler</h1>
-              <p className="text-blue-100 text-sm mt-1">24/7 Healthcare Support</p>
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6">
+            <div className="flex justify-between items-start">
+              <div className="flex items-center gap-3">
+                <Stethoscope className="text-white" size={28} />
+                <div>
+                  <h1 className="text-2xl font-semibold text-white">Telemedicine Appointment Scheduler</h1>
+                  <p className="text-blue-100 text-sm mt-1">24/7 Healthcare Support</p>
+                </div>
+              </div>
+              
+              {/* Team Members Table */}
+              <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 text-white text-sm">
+                <table className="min-w-[200px]">
+                  <thead>
+                    <tr>
+                      <th className="text-left px-2 py-1 border-b border-white/20">Name</th>
+                      <th className="text-left px-2 py-1 border-b border-white/20">Role</th>
+
+                      <th className="text-left px-2 py-1 border-b border-white/20">Reg No.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="px-2 py-1">Mohit Kumar</td>
+                      <td className="px-2 py-1">63</td>
+                      <td className="px-2 py-1">12318406</td>
+                    </tr>
+                    <tr>
+                      <td className="px-2 py-1">Koyna soni</td>
+                      <td className="px-2 py-1">28</td>
+                      <td className="px-2 py-1">12324749</td>
+                    </tr>
+                    <tr>
+                      <td className="px-2 py-1">Aman</td>
+                      <td className="px-2 py-1">65</td>
+                      <td className="px-2 py-1">12319612</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 
           {/* Progress Indicator */}
           <div className="bg-blue-50 px-6 py-3 flex items-center gap-6 text-sm">
-            {['initial', 'name', 'patient-info', 'symptoms-selection', 'specialization', 'consultation-type', 'doctor', 'date', 'time', 'contact-info', 'email', 'confirmation'].map((step, index) => (
+            {['initial', 'patient-info', 'symptoms-selection', 'specialization', 'doctor', 'date', 'contact-info', 'confirmation'].map((step, index) => (
               <div
                 key={step}
                 className={`flex items-center ${
-                  index < ['initial', 'name', 'patient-info', 'symptoms-selection', 'specialization', 'consultation-type', 'doctor', 'date', 'time', 'contact-info', 'email', 'confirmation'].indexOf(state.currentStep)
+                  index < ['initial', 'patient-info', 'symptoms-selection', 'specialization', 'doctor', 'date', 'contact-info', 'confirmation'].indexOf(state.currentStep)
                     ? 'text-blue-600'
-                    : index === ['initial', 'name', 'patient-info', 'symptoms-selection', 'specialization', 'consultation-type', 'doctor', 'date', 'time', 'contact-info', 'email', 'confirmation'].indexOf(state.currentStep)
+                    : index === ['initial', 'patient-info', 'symptoms-selection', 'specialization', 'doctor', 'date', 'contact-info', 'confirmation'].indexOf(state.currentStep)
                     ? 'text-blue-800 font-semibold'
                     : 'text-gray-400'
                 }`}
               >
                 <div
                   className={`w-6 h-6 rounded-full flex items-center justify-center mr-2 ${
-                    index < ['initial', 'name', 'patient-info', 'symptoms-selection', 'specialization', 'consultation-type', 'doctor', 'date', 'time', 'contact-info', 'email', 'confirmation'].indexOf(state.currentStep)
+                    index < ['initial', 'patient-info', 'symptoms-selection', 'specialization', 'doctor', 'date', 'contact-info', 'confirmation'].indexOf(state.currentStep)
                       ? 'bg-blue-600 text-white'
-                      : index === ['initial', 'name', 'patient-info', 'symptoms-selection', 'specialization', 'consultation-type', 'doctor', 'date', 'time', 'contact-info', 'email', 'confirmation'].indexOf(state.currentStep)
+                      : index === ['initial', 'patient-info', 'symptoms-selection', 'specialization', 'doctor', 'date', 'contact-info', 'confirmation'].indexOf(state.currentStep)
                       ? 'bg-blue-800 text-white'
                       : 'bg-gray-200 text-gray-400'
                   }`}
@@ -594,32 +490,44 @@ You can start a new appointment by typing "start over".
           <div className="bg-white p-6">
             <div className="space-y-4">
               {state.messages.map((message) => (
-                <ChatMessage
-                  key={message.id}
-                  message={message}
-                  onOptionSelect={handleUserMessage}
-                />
-              ))}
-              <div ref={chatEndRef} />
-            </div>
+              <ChatMessage
+                key={message.id}
+                message={message}
+                onOptionSelect={handleUserMessage}
+              />
+            ))}
+            <div ref={chatEndRef} />
+          </div>
           </div>
 
-          {/* Example Doctor Location Map */}
-          {state.currentStep === 'doctor' && state.selectedDoctor && (
+          {/* Doctor Location Map */}
+          {state.currentStep === 'doctor' && selectedDoctor && (
             <div className="p-6 border-t">
               <DoctorLocation
-                placeId={state.selectedDoctor.placeId}
-                latitude={state.selectedDoctor.latitude}
-                longitude={state.selectedDoctor.longitude}
-                doctorName={state.selectedDoctor.name}
-                specialization={state.selectedSpecialization}
+                placeId={selectedDoctor.placeId}
+                latitude={selectedDoctor.latitude}
+                longitude={selectedDoctor.longitude}
+                doctorName={selectedDoctor.name}
+                specialization={selectedSpecialization}
               />
             </div>
           )}
 
           {/* Chat Input */}
-          <div className="border-t p-4">
-            <ChatInput onSend={handleUserMessage} />
+          <div className="bg-white p-4 border-t border-gray-200">
+            {loading ? (
+              <div className="text-center p-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+                <p className="mt-2 text-gray-600 text-sm">Processing your request...</p>
+              </div>
+            ) : (
+              <ChatInput 
+                onSend={handleUserMessage} 
+                disabled={loading} 
+                placeholder={getInputPlaceholder(state.currentStep)}
+                maxLength={getMaxLength(state.currentStep)}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -627,4 +535,46 @@ You can start a new appointment by typing "start over".
   );
 }
 
-export default App;
+// Helper function to get appropriate placeholder based on current step
+const getInputPlaceholder = (step: string): string => {
+  switch (step) {
+    case 'patient-info':
+      return 'Enter your full name (letters only)';
+    case 'symptoms-selection':
+      return 'Type your symptoms or select from options';
+    case 'specialization':
+      return 'Select a specialization';
+    case 'doctor':
+      return 'Select a doctor';
+    case 'date':
+      return 'Enter date (YYYY-MM-DD)';
+    case 'contact-info':
+      return 'Enter your phone number';
+    case 'confirmation':
+      return 'Enter your email address';
+    default:
+      return 'Type your message...';
+  }
+};
+
+// Helper function to get appropriate max length based on current step
+const getMaxLength = (step: string): number => {
+  switch (step) {
+    case 'patient-info':
+      return 50; // Name length
+    case 'symptoms-selection':
+      return 200; // Symptoms description
+    case 'specialization':
+      return 100; // Specialization name
+    case 'doctor':
+      return 100; // Doctor name
+    case 'date':
+      return 10; // YYYY-MM-DD format
+    case 'contact-info':
+      return 15; // Phone number
+    case 'confirmation':
+      return 100; // Email address
+    default:
+      return 500; // Default max length
+  }
+};
