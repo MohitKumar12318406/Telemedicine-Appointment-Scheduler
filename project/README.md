@@ -17,8 +17,8 @@ An intelligent telemedicine appointment scheduling system that uses AI to analyz
 | Name         | Registration No. | Roll No. |
 |-------------|-----------------|----------|
 | Mohit Kumar | 12318406        | 63       |
-| Koyna Soni  | 12318449        | 28       |
-| Aman        | 12319643        | 65       |
+| Koyna soni  | 12324749        | 28       |
+| Aman        | 12319612        | 65       |
 
 ## Tech Stack
 
