@@ -1,6 +1,6 @@
 import { DoctorLocationData } from './googleApi';
 
-const API_BASE_URL = 'http://localhost:3000/api'; // Update this with your actual backend URL
+const API_BASE_URL = 'http://localhost:3001/api'; // Update this with your actual backend URL
 
 export interface ChatResponse {
   message: string;
@@ -23,13 +23,18 @@ export const sendChatMessage = async (message: string, currentStep: string): Pro
     });
 
     if (!response.ok) {
-      throw new Error('Failed to send message');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Server responded with status: ${response.status}`);
     }
 
     return await response.json();
   } catch (error) {
     console.error('Error sending chat message:', error);
-    throw error;
+    if (error instanceof Error) {
+      throw error;
+    } else {
+      throw new Error('An unknown error occurred while sending your message');
+    }
   }
 };
 

@@ -7,8 +7,13 @@ export interface DoctorLocationData {
   address: string;
   latitude: number;
   longitude: number;
-  rating?: number;
-  userRatingsTotal?: number;
+  qualifications: string[];
+  experience: string;
+  languages: string[];
+  rating: number;
+  reviewCount: number;
+  bio: string;
+  consultationFee: number;
   phoneNumber?: string;
   website?: string;
   openingHours?: string[];
@@ -44,7 +49,21 @@ const validateDoctorData = (data: DoctorLocationData): boolean => {
     data.name.length > 0 &&
     data.address.length > 0 &&
     validateCoordinates(data.latitude, data.longitude) &&
-    (!data.rating || (data.rating >= 0 && data.rating <= 5)) &&
+    Array.isArray(data.qualifications) &&
+    data.qualifications.length > 0 &&
+    typeof data.experience === 'string' &&
+    data.experience.length > 0 &&
+    Array.isArray(data.languages) &&
+    data.languages.length > 0 &&
+    typeof data.rating === 'number' &&
+    data.rating >= 0 &&
+    data.rating <= 5 &&
+    typeof data.reviewCount === 'number' &&
+    data.reviewCount >= 0 &&
+    typeof data.bio === 'string' &&
+    data.bio.length > 0 &&
+    typeof data.consultationFee === 'number' &&
+    data.consultationFee >= 0 &&
     (!data.phoneNumber || /^\+?[\d\s-()]{10,}$/.test(data.phoneNumber)) &&
     (!data.website || /^https?:\/\/.+/.test(data.website))
   );
@@ -107,14 +126,19 @@ export const searchDoctorsByLocation = async (
   } catch (error) {
     console.error('Error searching for doctors:', error);
     // Return static data as fallback with validation
-    const fallbackData = {
+    const fallbackData: DoctorLocationData = {
       placeId: 'static-1',
       name: 'Dr. John Smith',
       address: '123 Medical Center, City',
       latitude: latitude + 0.01,
       longitude: longitude + 0.01,
+      qualifications: ['MD', 'MBBS', 'MRCP'],
+      experience: '15 years',
+      languages: ['English', 'Spanish'],
       rating: 4.5,
-      userRatingsTotal: 100,
+      reviewCount: 100,
+      bio: 'Experienced physician specializing in general medicine with a focus on preventive care.',
+      consultationFee: 150,
       phoneNumber: '+1 (555) 123-4567',
       website: 'https://example.com',
       openingHours: [
@@ -161,14 +185,19 @@ export const getPlaceDetails = async (placeId: string): Promise<DoctorLocationDa
   } catch (error) {
     console.error('Error getting doctor details:', error);
     // Return static data as fallback with validation
-    const fallbackData = {
+    const fallbackData: DoctorLocationData = {
       placeId: 'static-1',
       name: 'Dr. John Smith',
       address: '123 Medical Center, City',
       latitude: 40.7128,
       longitude: -74.0060,
+      qualifications: ['MD', 'MBBS', 'MRCP'],
+      experience: '15 years',
+      languages: ['English', 'Spanish'],
       rating: 4.5,
-      userRatingsTotal: 100,
+      reviewCount: 100,
+      bio: 'Experienced physician specializing in general medicine with a focus on preventive care.',
+      consultationFee: 150,
       phoneNumber: '+1 (555) 123-4567',
       website: 'https://example.com',
       openingHours: [

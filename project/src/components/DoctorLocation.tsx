@@ -9,6 +9,13 @@ interface DoctorLocationProps {
   longitude?: number;
   doctorName: string;
   specialization: string;
+  qualifications?: string[];
+  experience?: string;
+  languages?: string[];
+  rating?: number;
+  reviewCount?: number;
+  bio?: string;
+  consultationFee?: number;
 }
 
 export const DoctorLocation: React.FC<DoctorLocationProps> = ({
@@ -16,7 +23,14 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
   latitude,
   longitude,
   doctorName,
-  specialization
+  specialization,
+  qualifications = [],
+  experience = '',
+  languages = [],
+  rating = 0,
+  reviewCount = 0,
+  bio = '',
+  consultationFee = 0
 }) => {
   const [doctorData, setDoctorData] = useState<DoctorLocationData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -79,8 +93,8 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
             address: 'Location available on map',
             latitude,
             longitude,
-            rating: 0,
-            userRatingsTotal: 0,
+            rating: rating,
+            userRatingsTotal: reviewCount,
             phoneNumber: 'Contact through appointment system',
             website: '',
             openingHours: [
@@ -103,7 +117,7 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
     if (placeId || (latitude && longitude)) {
       fetchDoctorData();
     }
-  }, [placeId, latitude, longitude, doctorName]);
+  }, [placeId, latitude, longitude, doctorName, rating, reviewCount]);
 
   useEffect(() => {
     if (mapLoaded && doctorData) {
@@ -218,6 +232,10 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
           <h4 className="font-medium text-lg mb-2">{doctorData.name}</h4>
           <p className="text-sm text-gray-600 mb-2">{specialization}</p>
           
+          {bio && (
+            <p className="text-sm text-gray-600 mb-4">{bio}</p>
+          )}
+          
           <div className="space-y-2 text-sm">
             <div className="flex items-start">
               <MapPin className="h-5 w-5 text-gray-500 mr-2 flex-shrink-0 mt-0.5" />
@@ -259,8 +277,40 @@ export const DoctorLocation: React.FC<DoctorLocationProps> = ({
               </div>
             )}
             
+            {qualifications.length > 0 && (
+              <div className="mt-2">
+                <p className="font-medium">Qualifications:</p>
+                <ul className="mt-1">
+                  {qualifications.map((qualification, index) => (
+                    <li key={index}>{qualification}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            
+            {experience && (
+              <div className="mt-2">
+                <p className="font-medium">Experience:</p>
+                <p>{experience}</p>
+              </div>
+            )}
+            
+            {languages.length > 0 && (
+              <div className="mt-2">
+                <p className="font-medium">Languages:</p>
+                <p>{languages.join(', ')}</p>
+              </div>
+            )}
+            
+            {consultationFee > 0 && (
+              <div className="mt-2">
+                <p className="font-medium">Consultation Fee:</p>
+                <p>${consultationFee}</p>
+              </div>
+            )}
+            
             {doctorData.rating && (
-              <div className="flex items-center">
+              <div className="flex items-center mt-2">
                 <Star className="h-5 w-5 text-yellow-400 mr-2" />
                 <span>
                   {doctorData.rating} ({doctorData.userRatingsTotal} reviews)
