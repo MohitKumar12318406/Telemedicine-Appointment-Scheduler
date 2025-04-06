@@ -1,10 +1,14 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Stethoscope } from 'lucide-react';
 import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
+import { DoctorLocation } from './components/DoctorLocation';
 import { SPECIALIZATIONS, SYMPTOMS, DISEASES, DOCTORS } from './data/medical-data';
 import { Specialization, Symptom, Disease, Doctor } from './services/api';
 import { format } from 'date-fns';
+import { searchDoctorsByLocation, getCurrentLocation, DoctorLocationData } from './services/googleApi';
+import { doctors } from './data/doctors';
+import { sendChatMessage, searchDoctors, getDoctorDetails, ChatResponse } from './services/backendApi';
 
 type Message = {
   id: string;
@@ -36,13 +40,23 @@ type ChatState = {
   availableSymptoms?: Symptom[];
   availableDoctors?: Doctor[];
   suggestedSpecializations?: Specialization[];
+  selectedSpecialization: string;
+  selectedDoctor: DoctorLocationData | null;
+  userLocation: { latitude: number; longitude: number } | null;
+  loading: boolean;
+  input: string;
 };
 
 function App() {
   const [state, setState] = useState<ChatState>({
     currentStep: 'initial',
     messages: [],
-    appointment: {}
+    appointment: {},
+    selectedSpecialization: '',
+    selectedDoctor: null,
+    userLocation: null,
+    loading: false,
+    input: ''
   });
 
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -51,17 +65,27 @@ function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [state.messages]);
 
-  const addMessage = (content: string, role: 'user' | 'bot', options?: string[]) => {
-    const message: Message = {
-      id: Date.now().toString(),
-      content,
-      role,
-      timestamp: new Date(),
-      options
+  useEffect(() => {
+    // Get user's current location when the app starts
+    const getUserLocation = async () => {
+      try {
+        const location = await getCurrentLocation();
+        setState(prev => ({
+          ...prev,
+          userLocation: location
+        }));
+      } catch (error) {
+        console.error('Error getting user location:', error);
+      }
     };
+
+    getUserLocation();
+  }, []);
+
+  const addMessage = (content: string, role: 'user' | 'bot', options?: string[]) => {
     setState(prev => ({
       ...prev,
-      messages: [...prev.messages, message]
+      messages: [...prev.messages, { content, role, options }]
     }));
   };
 
@@ -69,6 +93,42 @@ function App() {
     return DISEASES.filter((disease: Disease) => 
       disease.commonSymptoms.some((id: number) => symptomIds.includes(id))
     );
+  };
+
+  const handleSend = async () => {
+    if (!state.input.trim()) return;
+
+    const userMessage = state.input.trim();
+    setState(prev => ({ ...prev, input: '' }));
+    addMessage(userMessage, 'user');
+
+    setState(prev => ({ ...prev, loading: true }));
+
+    try {
+      // Send message to backend
+      const response = await sendChatMessage(userMessage, state.currentStep);
+
+      // Add bot response
+      addMessage(response.message, 'bot', response.options);
+
+      // Update step if provided
+      if (response.nextStep) {
+        setState(prev => ({ ...prev, currentStep: response.nextStep }));
+      }
+
+      // If doctors are returned, update the selected doctor
+      if (response.doctors && response.doctors.length > 0) {
+        setState(prev => ({
+          ...prev,
+          selectedDoctor: response.doctors[0]
+        }));
+      }
+    } catch (error) {
+      console.error('Error processing message:', error);
+      addMessage('Sorry, I encountered an error. Please try again.', 'bot');
+    } finally {
+      setState(prev => ({ ...prev, loading: false }));
+    }
   };
 
   const handleUserMessage = (message: string) => {
@@ -423,40 +483,74 @@ You can start a new appointment by typing "start over".
     }
   };
 
-  return (
-    <div className="min-h-screen">
-      <div className="max-w-4xl mx-auto p-4 relative">
-        {/* Member Details Table in Corner */}
-        <div className="absolute top-4 right-4 w-64 bg-white/90 backdrop-blur-sm p-3 rounded-lg shadow z-10">
-          <h2 className="text-sm font-semibold mb-2 text-gray-800">Team Members</h2>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b">
-                <th className="text-left py-1">Name</th>
-                <th className="text-left py-1">Reg. no.</th>
-                <th className="text-left py-1">Roll no.</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b">
-                <td className="py-1">Mohit Kumar</td>
-                <td className="py-1">12318406</td>
-                <td className="py-1">63</td>
-              </tr>
-              <tr className="border-b">
-                <td className="py-1">Koyna Soni</td>
-                <td className="py-1">12318449</td>
-                <td className="py-1">28</td>
-              </tr>
-              <tr>
-                <td className="py-1">Aman</td>
-                <td className="py-1">12319643</td>
-                <td className="py-1">65</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+  const handleSpecializationSelect = async (specialization: string) => {
+    setState(prev => ({
+      ...prev,
+      selectedSpecialization: specialization,
+      loading: true
+    }));
 
+    try {
+      if (state.userLocation) {
+        // Search for doctors using backend API
+        const result = await searchDoctors(
+          specialization,
+          state.userLocation.latitude,
+          state.userLocation.longitude
+        );
+
+        if (result.doctors && result.doctors.length > 0) {
+          setState(prev => ({
+            ...prev,
+            selectedDoctor: result.doctors[0],
+            currentStep: 'doctor'
+          }));
+        } else {
+          // Fallback to static data if no results found
+          const staticDoctor = doctors.find(d => d.specialization === specialization);
+          if (staticDoctor) {
+            setState(prev => ({
+              ...prev,
+              selectedDoctor: {
+                placeId: '',
+                name: staticDoctor.name,
+                address: 'Address not available',
+                latitude: 40.7128,
+                longitude: -74.0060
+              },
+              currentStep: 'doctor'
+            }));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error searching for doctors:', error);
+      // Fallback to static data
+      const staticDoctor = doctors.find(d => d.specialization === specialization);
+      if (staticDoctor) {
+        setState(prev => ({
+          ...prev,
+          selectedDoctor: {
+            placeId: '',
+            name: staticDoctor.name,
+            address: 'Address not available',
+            latitude: 40.7128,
+            longitude: -74.0060
+          },
+          currentStep: 'doctor'
+        }));
+      }
+    } finally {
+      setState(prev => ({
+        ...prev,
+        loading: false
+      }));
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-4">
+      <div className="max-w-4xl mx-auto">
         <div className="chat-container rounded-xl shadow-lg overflow-hidden">
           {/* Header */}
           <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 flex items-center gap-3">
@@ -497,19 +591,34 @@ You can start a new appointment by typing "start over".
           </div>
 
           {/* Chat Messages */}
-          <div className="h-[500px] overflow-y-auto p-6 space-y-4">
-            {state.messages.map(message => (
-              <ChatMessage
-                key={message.id}
-                message={message}
-                onOptionSelect={handleUserMessage}
-              />
-            ))}
-            <div ref={chatEndRef} />
+          <div className="bg-white p-6">
+            <div className="space-y-4">
+              {state.messages.map((message) => (
+                <ChatMessage
+                  key={message.id}
+                  message={message}
+                  onOptionSelect={handleUserMessage}
+                />
+              ))}
+              <div ref={chatEndRef} />
+            </div>
           </div>
 
-          {/* Input Area */}
-          <div className="p-4 border-t border-gray-100 bg-white">
+          {/* Example Doctor Location Map */}
+          {state.currentStep === 'doctor' && state.selectedDoctor && (
+            <div className="p-6 border-t">
+              <DoctorLocation
+                placeId={state.selectedDoctor.placeId}
+                latitude={state.selectedDoctor.latitude}
+                longitude={state.selectedDoctor.longitude}
+                doctorName={state.selectedDoctor.name}
+                specialization={state.selectedSpecialization}
+              />
+            </div>
+          )}
+
+          {/* Chat Input */}
+          <div className="border-t p-4">
             <ChatInput onSend={handleUserMessage} />
           </div>
         </div>
