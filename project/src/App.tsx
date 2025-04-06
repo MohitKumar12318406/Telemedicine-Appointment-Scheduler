@@ -430,8 +430,7 @@ ${table.split('\n').slice(1).join('\n')}
                   <thead>
                     <tr>
                       <th className="text-left px-2 py-1 border-b border-white/20">Name</th>
-                      <th className="text-left px-2 py-1 border-b border-white/20">Role</th>
-
+                      <th className="text-left px-2 py-1 border-b border-white/20">Roll No.</th>
                       <th className="text-left px-2 py-1 border-b border-white/20">Reg No.</th>
                     </tr>
                   </thead>
