@@ -6,7 +6,7 @@ export interface ChatResponse {
   message: string;
   options?: string[];
   doctors?: DoctorLocationData[];
-  nextStep?: 'initial' | 'patient-info' | 'symptoms-selection' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation';
+  nextStep?: 'initial' | 'patient-info' | 'symptoms-selection' | 'other-issues' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation';
 }
 
 export const sendChatMessage = async (message: string, currentStep: string): Promise<ChatResponse> => {

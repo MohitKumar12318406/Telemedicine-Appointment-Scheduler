@@ -25,13 +25,14 @@ export interface Appointment {
   specialization?: string;
   patientName?: string;
   symptoms?: any[];
+  customSymptoms?: string;
   contactNumber?: string;
   email?: string;
   confirmed?: boolean;
 }
 
 export interface ChatState {
-  currentStep: 'initial' | 'patient-info' | 'symptoms-selection' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation';
+  currentStep: 'initial' | 'patient-info' | 'symptoms-selection' | 'other-issues' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation';
   messages: Message[];
   appointment: Partial<Appointment>;
   availableSymptoms?: any[];

@@ -1,0 +1,9 @@
+[33mcommit 93d35294d49ca12a8506c619db21c070337954d2[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: {MohitKumar12318406} <{mohitberiwal2004@gmail.com}>
+Date:   Sun Apr 6 21:04:55 2025 +0530
+
+    Add Google API configuration and update gitignore for environment variables
+
+ project/.gitignore           | 5 [32m+++++[m
+ project/src/config/google.ts | 8 [32m++++++++[m
+ 2 files changed, 13 insertions(+)

@@ -26,6 +26,9 @@ interface DoctorLocationData {
   consultationFee: number;
 }
 
+// Update the ChatState type to include the new step
+export type ChatStep = 'initial' | 'patient-info' | 'symptoms-selection' | 'other-issues' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation';
+
 export default function App() {
   const [state, setState] = useState<ChatState>({
     currentStep: 'initial',
@@ -133,7 +136,7 @@ export default function App() {
       if (response.nextStep) {
         setState(prev => ({ 
           ...prev, 
-          currentStep: response.nextStep as 'initial' | 'patient-info' | 'symptoms-selection' | 'specialization' | 'doctor' | 'date' | 'time' | 'contact-info' | 'confirmation'
+          currentStep: response.nextStep as ChatStep
         }));
       }
       
@@ -167,6 +170,17 @@ export default function App() {
               }
             }));
           }
+          break;
+          
+        case 'other-issues':
+          // Store the custom symptoms description
+          setState(prev => ({
+            ...prev,
+            appointment: { 
+              ...prev.appointment, 
+              customSymptoms: message
+            }
+          }));
           break;
           
         case 'specialization':

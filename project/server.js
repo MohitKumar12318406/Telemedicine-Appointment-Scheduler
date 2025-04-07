@@ -31,7 +31,7 @@ const prompts = {
       id: 'symptoms-1',
       step: 'symptoms-selection',
       message: 'Please select your symptoms:',
-      options: ['Fever', 'Cough', 'Headache', 'Sore throat', 'Fatigue', 'Nausea', 'Dizziness', 'Chest pain', 'Start from First']
+      options: ['Fever', 'Cough', 'Headache', 'Sore throat', 'Fatigue', 'Nausea', 'Dizziness', 'Chest pain', 'Other Issues', 'Start from First']
     }
   ],
   specialization: [
@@ -263,26 +263,38 @@ app.post('/api/chat', (req, res) => {
       break;
       
     case 'symptoms-selection':
-      const selectedSymptoms = symptoms.filter(symptom =>
-        message.toLowerCase().includes(symptom.name.toLowerCase())
-      );
-      
-      if (selectedSymptoms.length > 0) {
-        const possibleConditions = diseases.filter(disease =>
-          disease.commonSymptoms.some(id => selectedSymptoms.some(s => s.id === id))
-        );
-        
-        const suggestedSpecs = specializations.filter(spec =>
-          possibleConditions.some(disease => disease.recommendedSpecialization === spec.id)
-        );
-        
-        response.message = 'Based on your symptoms, I recommend the following specializations:';
-        response.options = suggestedSpecs.map(s => s.name);
-        response.nextStep = 'specialization';
+      if (message.toLowerCase() === 'other issues') {
+        response.message = 'Please describe your symptoms in detail:';
+        response.nextStep = 'other-issues';
       } else {
-        response.message = 'Please select valid symptoms from the list:';
-        response.options = symptoms.map(s => s.name);
+        const selectedSymptoms = symptoms.filter(symptom =>
+          message.toLowerCase().includes(symptom.name.toLowerCase())
+        );
+        
+        if (selectedSymptoms.length > 0) {
+          const possibleConditions = diseases.filter(disease =>
+            disease.commonSymptoms.some(id => selectedSymptoms.some(s => s.id === id))
+          );
+          
+          const suggestedSpecs = specializations.filter(spec =>
+            possibleConditions.some(disease => disease.recommendedSpecialization === spec.id)
+          );
+          
+          response.message = 'Based on your symptoms, I recommend the following specializations:';
+          response.options = suggestedSpecs.map(s => s.name);
+          response.nextStep = 'specialization';
+        } else {
+          response.message = 'Please select valid symptoms from the list:';
+          response.options = symptoms.map(s => s.name);
+        }
       }
+      break;
+      
+    case 'other-issues':
+      // Process custom symptoms description
+      response.message = 'Based on your description, I recommend the following specializations:';
+      response.options = specializations.map(s => s.name);
+      response.nextStep = 'specialization';
       break;
       
     case 'specialization':
