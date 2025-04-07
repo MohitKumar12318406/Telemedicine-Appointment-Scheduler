@@ -8,10 +8,10 @@ dotenv.config();
 
 // Validate required environment variables
 const requiredEnvVars = [
-  'QkJXIil5y40SdJOww',
-  '0GkbYKUaKOmAt1LBc870y',
-  'service_tmfp9cd',
-  'template_o6h1i1qd'
+  'EMAILJS_PUBLIC_KEY',
+  'EMAILJS_PRIVATE_KEY',
+  'EMAILJS_SERVICE_ID',
+  'EMAILJS_TEMPLATE_ID'
 ];
 
 for (const envVar of requiredEnvVars) {
@@ -249,7 +249,13 @@ const sendVerificationEmail = async (email) => {
   const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
   
   try {
-    console.log('Preparing to send email to:', email);
+    console.log('=== Email Sending Debug Info ===');
+    console.log('Email to send to:', email);
+    console.log('Environment variables:');
+    console.log('EMAILJS_SERVICE_ID:', process.env.EMAILJS_SERVICE_ID);
+    console.log('EMAILJS_TEMPLATE_ID:', process.env.EMAILJS_TEMPLATE_ID);
+    console.log('EMAILJS_PUBLIC_KEY:', process.env.EMAILJS_PUBLIC_KEY);
+    console.log('EMAILJS_PRIVATE_KEY:', process.env.EMAILJS_PRIVATE_KEY ? 'Present' : 'Missing');
     
     const templateParams = {
       to_email: email,
@@ -258,9 +264,7 @@ const sendVerificationEmail = async (email) => {
       message: 'Please verify your email for Telemedicine Appointment'
     };
 
-    console.log('Template params:', templateParams);
-    console.log('Using service ID:', process.env.service_tmfp9cd);
-    console.log('Using template ID:', process.env.template_o6h1i1qd);
+    console.log('Template parameters:', templateParams);
 
     // Send email using EmailJS
     const result = await emailjs.send(
@@ -283,12 +287,11 @@ const sendVerificationEmail = async (email) => {
       throw new Error('Failed to send email - unexpected response');
     }
   } catch (error) {
-    console.error('Detailed email error:', {
-      message: error.message,
-      status: error.status,
-      response: error.response?.data,
-      stack: error.stack
-    });
+    console.error('=== Detailed Email Error ===');
+    console.error('Error message:', error.message);
+    console.error('Error status:', error.status);
+    console.error('Error response:', error.response?.data);
+    console.error('Error stack:', error.stack);
     throw new Error('Failed to send verification email. Please try again later.');
   }
 };
