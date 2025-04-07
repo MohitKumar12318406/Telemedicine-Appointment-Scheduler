@@ -6,6 +6,23 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
+// Validate required environment variables
+const requiredEnvVars = [
+  'QkJXIil5y40SdJOww',
+  '0GkbYKUaKOmAt1LBc870y',
+  'service_tmfp9cd',
+  'template_o6h1i1qd'
+];
+
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+}
+
+console.log('All required environment variables are present');
+
 const app = express();
 const port = 3001;
 
@@ -36,7 +53,7 @@ const prompts = {
       id: 'symptoms-1',
       step: 'symptoms-selection',
       message: 'Please select your symptoms:',
-      options: ['Fever', 'Cough', 'Headache', 'Sore throat', 'Fatigue', 'Nausea', 'Dizziness', 'Chest pain', 'Other Issues', 'Start from First']
+      options: ['Fever', 'Cough','heart', 'Headache', 'Sore throat', 'Fatigue', 'Nausea', 'Dizziness', 'Chest pain', 'Other Issues', 'Start from First']
     }
   ],
   specialization: [
@@ -232,7 +249,7 @@ const sendVerificationEmail = async (email) => {
   const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
   
   try {
-    console.log('Sending verification email to:', email);
+    console.log('Preparing to send email to:', email);
     
     const templateParams = {
       to_email: email,
@@ -240,6 +257,10 @@ const sendVerificationEmail = async (email) => {
       from_name: 'Telemedicine App',
       message: 'Please verify your email for Telemedicine Appointment'
     };
+
+    console.log('Template params:', templateParams);
+    console.log('Using service ID:', process.env.service_tmfp9cd);
+    console.log('Using template ID:', process.env.template_o6h1i1qd);
 
     // Send email using EmailJS
     const result = await emailjs.send(
@@ -252,17 +273,21 @@ const sendVerificationEmail = async (email) => {
       }
     );
 
-    if (result.status === 200) {
+    console.log('EmailJS response:', result);
+
+    if (result && result.status === 200) {
       console.log('Email sent successfully');
       return verificationCode;
     } else {
-      throw new Error('Failed to send email');
+      console.error('Unexpected response from EmailJS:', result);
+      throw new Error('Failed to send email - unexpected response');
     }
   } catch (error) {
-    console.error('Email error details:', {
+    console.error('Detailed email error:', {
       message: error.message,
       status: error.status,
-      response: error.response?.data
+      response: error.response?.data,
+      stack: error.stack
     });
     throw new Error('Failed to send verification email. Please try again later.');
   }
@@ -409,12 +434,22 @@ app.post('/api/chat', async (req, res) => {
     case 'confirmation':
       // Validate email format
       if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(message)) {
+        console.log('Attempting to send verification email to:', message);
+        console.log('Environment variables check:', {
+          hasPublicKey: !!process.env.EMAILJS_PUBLIC_KEY,
+          hasPrivateKey: !!process.env.EMAILJS_PRIVATE_KEY,
+          hasServiceId: !!process.env.EMAILJS_SERVICE_ID,
+          hasTemplateId: !!process.env.EMAILJS_TEMPLATE_ID
+        });
+        
         try {
           const verificationCode = await sendVerificationEmail(message);
+          console.log('Verification code generated:', verificationCode);
           response.message = 'A verification code has been sent to your email. Please enter the code to confirm your appointment:';
           response.nextStep = 'verify-email';
           response.verificationCode = verificationCode;
         } catch (error) {
+          console.error('Error in confirmation case:', error);
           response.message = 'Failed to send verification email. Please try again later.';
         }
       } else {
