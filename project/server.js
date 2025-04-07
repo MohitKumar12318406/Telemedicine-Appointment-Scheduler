@@ -1,5 +1,10 @@
 import express from 'express';
 import cors from 'cors';
+import emailjs from '@emailjs/nodejs';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
 const port = 3001;
@@ -222,8 +227,49 @@ app.get('/api/prompts', (req, res) => {
   res.json(prompts[step]);
 });
 
+// Email verification function
+const sendVerificationEmail = async (email) => {
+  const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+  
+  try {
+    console.log('Sending verification email to:', email);
+    
+    const templateParams = {
+      to_email: email,
+      verification_code: verificationCode,
+      from_name: 'Telemedicine App',
+      message: 'Please verify your email for Telemedicine Appointment'
+    };
+
+    // Send email using EmailJS
+    const result = await emailjs.send(
+      process.env.EMAILJS_SERVICE_ID,
+      process.env.EMAILJS_TEMPLATE_ID,
+      templateParams,
+      {
+        publicKey: process.env.EMAILJS_PUBLIC_KEY,
+        privateKey: process.env.EMAILJS_PRIVATE_KEY
+      }
+    );
+
+    if (result.status === 200) {
+      console.log('Email sent successfully');
+      return verificationCode;
+    } else {
+      throw new Error('Failed to send email');
+    }
+  } catch (error) {
+    console.error('Email error details:', {
+      message: error.message,
+      status: error.status,
+      response: error.response?.data
+    });
+    throw new Error('Failed to send verification email. Please try again later.');
+  }
+};
+
 // Chat endpoint to process user input
-app.post('/api/chat', (req, res) => {
+app.post('/api/chat', async (req, res) => {
   const { message, currentStep } = req.body;
   
   if (!message || !currentStep) {
@@ -363,10 +409,50 @@ app.post('/api/chat', (req, res) => {
     case 'confirmation':
       // Validate email format
       if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(message)) {
-        response.message = 'Your appointment has been confirmed! You will receive a confirmation email shortly.';
-        response.nextStep = 'initial';
+        try {
+          const verificationCode = await sendVerificationEmail(message);
+          response.message = 'A verification code has been sent to your email. Please enter the code to confirm your appointment:';
+          response.nextStep = 'verify-email';
+          response.verificationCode = verificationCode;
+        } catch (error) {
+          response.message = 'Failed to send verification email. Please try again later.';
+        }
       } else {
         response.message = 'Please enter a valid email address:';
+      }
+      break;
+      
+    case 'verify-email':
+      if (message === req.body.verificationCode) {
+        response.message = 'Your email has been verified and your appointment has been confirmed! You will receive a confirmation email shortly.';
+        response.nextStep = 'initial';
+        
+        // Send confirmation email
+        try {
+          const confirmationResult = await emailjs.send(
+            process.env.EMAILJS_SERVICE_ID,
+            process.env.EMAILJS_TEMPLATE_ID,
+            {
+              to_email: req.body.email,
+              verification_code: 'CONFIRMED',
+              from_name: 'Telemedicine App',
+              message: 'Your appointment has been confirmed. Thank you for choosing our service.'
+            },
+            {
+              publicKey: process.env.EMAILJS_PUBLIC_KEY,
+              privateKey: process.env.EMAILJS_PRIVATE_KEY
+            }
+          );
+
+          if (confirmationResult.status !== 200) {
+            console.error('Confirmation email failed to send');
+          }
+        } catch (error) {
+          console.error('Error sending confirmation email:', error);
+        }
+      } else {
+        response.message = 'Invalid verification code. Please try again:';
+        response.nextStep = 'verify-email';
       }
       break;
       
